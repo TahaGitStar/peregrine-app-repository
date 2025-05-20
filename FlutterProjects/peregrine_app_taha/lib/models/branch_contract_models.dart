@@ -49,7 +49,17 @@ class Branch {
       'isActive': isActive,
     };
   }
+  
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Branch && other.id == id;
+  }
+
+  @override
+  int get hashCode => id.hashCode;
 }
+
 
 /// Represents a contract between client and company
 class Contract {
@@ -122,6 +132,15 @@ class Contract {
     if (now.isAfter(endDate)) return 0;
     return endDate.difference(now).inDays;
   }
+  
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Contract && other.id == id;
+  }
+
+  @override
+  int get hashCode => id.hashCode;
 }
 
 /// Response model for branch list API

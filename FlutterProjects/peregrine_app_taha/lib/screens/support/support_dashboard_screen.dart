@@ -3,16 +3,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:provider/provider.dart';
 import 'package:peregrine_app_taha/utils/app_theme.dart';
 import 'package:peregrine_app_taha/models/support_request.dart';
 import 'package:peregrine_app_taha/screens/support/support_request_details_screen.dart';
 import 'package:peregrine_app_taha/screens/support/support_settings_screen.dart';
+import 'package:peregrine_app_taha/screens/support/notifications_screen.dart';
 import 'package:peregrine_app_taha/utils/date_formatter.dart';
 import 'package:peregrine_app_taha/screens/change_password_screen.dart';
 import 'package:peregrine_app_taha/screens/login_screen.dart';
 import 'package:peregrine_app_taha/screens/support/create_client_account_screen.dart';
 import 'package:peregrine_app_taha/screens/profile_edit_screen.dart';
 import 'package:peregrine_app_taha/services/profile_service.dart';
+import 'package:peregrine_app_taha/providers/notification_provider.dart';
+import 'package:peregrine_app_taha/widgets/notification_badge.dart';
 
 class SupportDashboardScreen extends StatefulWidget {
   static const String routeName = '/support-dashboard';
@@ -62,6 +66,10 @@ class _SupportDashboardScreenState extends State<SupportDashboardScreen> with Si
             _isLoading = false;
           });
           
+          // Initialize notification provider
+          final notificationProvider = Provider.of<NotificationProvider>(context, listen: false);
+          notificationProvider.initialize();
+          
           // Animate items in
           Future.microtask(() {
             if (mounted) {
@@ -106,25 +114,21 @@ class _SupportDashboardScreenState extends State<SupportDashboardScreen> with Si
           ),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(LucideIcons.bell, color: Colors.white, size: 24),
-            splashRadius: 24,
-            tooltip: 'الإشعارات',
-            onPressed: () {
-              HapticFeedback.lightImpact();
-              // Show notifications
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    'لا توجد إشعارات جديدة',
-                    style: GoogleFonts.cairo(),
-                    textAlign: TextAlign.center,
-                  ),
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  backgroundColor: AppTheme.accent,
+          // Notifications button with badge
+          Consumer<NotificationProvider>(
+            builder: (context, notificationProvider, child) {
+              return NotificationBadge(
+                count: notificationProvider.unreadCount,
+                color: Colors.red,
+                child: IconButton(
+                  icon: const Icon(LucideIcons.bell, color: Colors.white, size: 24),
+                  splashRadius: 24,
+                  tooltip: 'الإشعارات',
+                  onPressed: () {
+                    HapticFeedback.lightImpact();
+                    // Navigate to notifications screen
+                    Navigator.pushNamed(context, NotificationsScreen.routeName);
+                  },
                 ),
               );
             },

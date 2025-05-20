@@ -54,14 +54,37 @@ class _ReportAccidentScreenState extends State<ReportAccidentScreen> {
   void initState() {
     super.initState();
     
-    // Initialize branch from provider if available
+    // Initialize providers
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      
+      // Initialize providers
+      final branchContractProvider = Provider.of<BranchContractProvider>(context, listen: false);
       final userRoleProvider = Provider.of<UserRoleProvider>(context, listen: false);
-      if (userRoleProvider.selectedBranch != null) {
-        setState(() {
-          _selectedBranch = userRoleProvider.selectedBranch;
-        });
-      }
+      
+      Future.wait([
+        userRoleProvider.initialize(),
+        branchContractProvider.initialize(),
+      ]).then((_) {
+        if (!mounted) return;
+        
+        if (userRoleProvider.selectedBranch != null) {
+          setState(() {
+            // Find the matching branch from branchContractProvider to ensure we use the same instance
+            String selectedBranchId = userRoleProvider.selectedBranch!.id;
+            _selectedBranch = branchContractProvider.branches.firstWhere(
+              (branch) => branch.id == selectedBranchId,
+              orElse: () => branchContractProvider.branches.isNotEmpty ? 
+                            branchContractProvider.branches.first : 
+                            userRoleProvider.selectedBranch!
+            );
+          });
+        } else if (branchContractProvider.branches.isNotEmpty) {
+          setState(() {
+            _selectedBranch = branchContractProvider.branches.first;
+          });
+        }
+      });
     });
   }
   
@@ -179,6 +202,8 @@ class _ReportAccidentScreenState extends State<ReportAccidentScreen> {
     
     // Check if branch is selected
     if (_selectedBranch == null) {
+      if (!mounted) return;
+      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -191,6 +216,8 @@ class _ReportAccidentScreenState extends State<ReportAccidentScreen> {
       );
       return;
     }
+    
+    if (!mounted) return;
     
     setState(() {
       _isSubmitting = true;
@@ -247,9 +274,11 @@ class _ReportAccidentScreenState extends State<ReportAccidentScreen> {
           ),
         );
         
-        setState(() {
-          _isSubmitting = false;
-        });
+        if (mounted) {
+          setState(() {
+            _isSubmitting = false;
+          });
+        }
       }
     } catch (e) {
       AppLogger.e('Error submitting report: $e');
@@ -266,9 +295,11 @@ class _ReportAccidentScreenState extends State<ReportAccidentScreen> {
         ),
       );
       
-      setState(() {
-        _isSubmitting = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
     }
   }
   
@@ -492,7 +523,7 @@ class _ReportAccidentScreenState extends State<ReportAccidentScreen> {
                                   DateFormat('yyyy/MM/dd').format(_selectedDate),
                                   style: GoogleFonts.cairo(
                                     color: AppTheme.accent,
-                                    fontSize: 16,
+                                    fontSize: 14,
                                   ),
                                 ),
                               ],

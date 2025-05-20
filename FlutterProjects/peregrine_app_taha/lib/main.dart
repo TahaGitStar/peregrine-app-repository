@@ -9,6 +9,7 @@ import 'package:peregrine_app_taha/providers/theme_provider.dart';
 import 'package:peregrine_app_taha/providers/localization_provider.dart';
 import 'package:peregrine_app_taha/providers/branch_contract_provider.dart';
 import 'package:peregrine_app_taha/providers/user_role_provider.dart';
+import 'package:peregrine_app_taha/providers/notification_provider.dart';
 import 'package:peregrine_app_taha/screens/client/splash_screen.dart';
 import 'package:peregrine_app_taha/screens/login_screen.dart';
 import 'package:peregrine_app_taha/screens/register_screen.dart';
@@ -27,6 +28,7 @@ import 'package:peregrine_app_taha/screens/support/create_client_account_screen.
 import 'package:peregrine_app_taha/screens/profile_edit_screen.dart';
 import 'package:peregrine_app_taha/screens/client/settings_screen.dart';
 import 'package:peregrine_app_taha/screens/support/support_settings_screen.dart';
+import 'package:peregrine_app_taha/screens/support/notifications_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,6 +49,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => LocalizationProvider()),
         ChangeNotifierProvider(create: (_) => BranchContractProvider()),
         ChangeNotifierProvider(create: (_) => UserRoleProvider()),
+        ChangeNotifierProvider(create: (_) => NotificationProvider()),
       ],
       child: const PeregrineApp(),
     ),
@@ -102,6 +105,7 @@ class PeregrineApp extends StatelessWidget {
         ProfileEditScreen.routeName: (_) => const ProfileEditScreen(),
         SettingsScreen.routeName: (_) => const SettingsScreen(),
         SupportSettingsScreen.routeName: (_) => const SupportSettingsScreen(),
+        NotificationsScreen.routeName: (_) => const NotificationsScreen(),
         // Note: SupportRequestDetailsScreen is not registered here because it requires parameters
       },
     );

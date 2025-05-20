@@ -69,18 +69,18 @@ class GuardService {
       var guards = _getMockGuards();
       
       // Apply filters
-      if (contractType != null) {
+      if (contractType != null && contractType.isNotEmpty) {
         // For demo purposes, we'll just filter randomly based on contract type
-        if (contractType == 'driver') {
-          // For driver contracts, return only the first guard
+        if (contractType == 'personal' || contractType == 'سياقة') {
+          // For personal/driver contracts, return only the first guard
           guards = guards.take(1).toList();
-        } else if (contractType == 'security') {
+        } else if (contractType == 'security' || contractType == 'حراسة') {
           // For security contracts, return all guards
           guards = guards;
         }
       }
       
-      if (branchId != null) {
+      if (branchId != null && branchId.isNotEmpty) {
         // For demo purposes, we'll filter based on the guard's schedule location
         // In a real implementation, guards would have a branchId property
         guards = guards.where((guard) {

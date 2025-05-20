@@ -5,6 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:peregrine_app_taha/models/guard_models.dart';
 import 'package:peregrine_app_taha/models/contract_type_models.dart';
 import 'package:peregrine_app_taha/models/branch_contract_models.dart';
+import 'package:peregrine_app_taha/providers/branch_contract_provider.dart';
 import 'package:peregrine_app_taha/providers/user_role_provider.dart';
 import 'package:peregrine_app_taha/screens/client/guard_details_screen.dart';
 import 'package:peregrine_app_taha/services/guard_service.dart';
@@ -52,18 +53,115 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
       curve: Curves.easeInOut,
     );
     
-    // Initialize user role provider
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Initialize providers
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      
+      // Initialize branch contract provider
+      final branchContractProvider = Provider.of<BranchContractProvider>(context, listen: false);
+      await branchContractProvider.initialize();
+      
+      // Initialize user role provider
       final userRoleProvider = Provider.of<UserRoleProvider>(context, listen: false);
-      userRoleProvider.initialize().then((_) {
-        setState(() {
-          _selectedContractType = userRoleProvider.selectedContractType;
-          _selectedBranch = userRoleProvider.selectedBranch;
-        });
+      await userRoleProvider.initialize();
+      
+      if (!mounted) return;
+      
+      // Set the contract type from user role provider
+      _selectedContractType = userRoleProvider.selectedContractType;
+      
+      // Get the contract type string
+      final contractType = _selectedContractType == ContractType.security ? 'حراسة' : 'سياقة';
+      
+      // Find branches that have contracts of this type
+      final branchesWithContractType = branchContractProvider.branches
+          .where((branch) {
+            final contractsForBranch = branchContractProvider.getContractsForBranch(branch.id);
+            return contractsForBranch.any((contract) => contract.type == contractType);
+          })
+          .toList();
+      
+      // Check if the user has a selected branch
+      if (userRoleProvider.selectedBranch != null) {
+        // Find the matching branch from branchContractProvider to ensure we use the same instance
+        String selectedBranchId = userRoleProvider.selectedBranch!.id;
         
-        // Load guards data with initial filters
-        _loadGuards();
-      });
+        // Check if the selected branch has contracts of the selected type
+        final selectedBranchHasContractType = branchContractProvider.getContractsForBranch(selectedBranchId)
+            .any((contract) => contract.type == contractType);
+        
+        if (selectedBranchHasContractType) {
+          // Use the selected branch
+          setState(() {
+            _selectedBranch = branchContractProvider.branches.firstWhere(
+              (branch) => branch.id == selectedBranchId,
+              orElse: () => branchesWithContractType.isNotEmpty ? 
+                            branchesWithContractType.first : 
+                            userRoleProvider.selectedBranch!
+            );
+          });
+        } else if (branchesWithContractType.isNotEmpty) {
+          // Use the first branch that has contracts of this type
+          setState(() {
+            _selectedBranch = branchesWithContractType.first;
+          });
+          userRoleProvider.selectBranch(_selectedBranch!);
+        }
+      } else if (branchesWithContractType.isNotEmpty) {
+        // Auto-select branch if there's only one with this contract type
+        if (branchesWithContractType.length == 1) {
+          setState(() {
+            _selectedBranch = branchesWithContractType.first;
+          });
+          userRoleProvider.selectBranch(_selectedBranch!);
+        } else if (branchesWithContractType.isNotEmpty) {
+          // Otherwise use the first branch that has contracts of this type
+          setState(() {
+            _selectedBranch = branchesWithContractType.first;
+          });
+          userRoleProvider.selectBranch(_selectedBranch!);
+        }
+      }
+      
+      // Sync the selected branch between providers
+      if (_selectedBranch != null) {
+        branchContractProvider.selectBranch(_selectedBranch!);
+        
+        // Find a contract for this branch and set it as selected
+        final contractsForBranch = branchContractProvider.getContractsForBranch(_selectedBranch!.id);
+        if (contractsForBranch.isNotEmpty) {
+          // Find a contract matching the selected contract type if possible
+          final matchingContracts = contractsForBranch.where(
+            (contract) => contract.type == contractType
+          ).toList();
+          
+          if (matchingContracts.isNotEmpty) {
+            branchContractProvider.selectContract(matchingContracts.first);
+          } else {
+            // If no matching contracts, try to switch contract type
+            final otherContractType = contractType == 'حراسة' ? 'سياقة' : 'حراسة';
+            final otherTypeContracts = contractsForBranch.where(
+              (contract) => contract.type == otherContractType
+            ).toList();
+            
+            if (otherTypeContracts.isNotEmpty) {
+              // Switch to the other contract type
+              setState(() {
+                _selectedContractType = contractType == 'حراسة' ? 
+                    ContractType.personal : ContractType.security;
+              });
+              userRoleProvider.selectContractType(_selectedContractType);
+              branchContractProvider.selectContract(otherTypeContracts.first);
+            } else {
+              // Use the first contract as a fallback
+              branchContractProvider.selectContract(contractsForBranch.first);
+            }
+          }
+        }
+      }
+      
+      // Load guards data with initial filters
+      _loadGuards();
     });
   }
   
@@ -75,25 +173,67 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
   
   /// Load guards data from the service with filters
   Future<void> _loadGuards() async {
+    if (!mounted) return;
+    
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
     
     try {
+      // Map the contract type to the appropriate string value
+      final contractTypeStr = _selectedContractType == ContractType.security ? 'حراسة' : 'سياقة';
+      
+      // Check if we have a selected branch
+      if (_selectedBranch == null) {
+        // Get branch contract provider
+        final branchContractProvider = Provider.of<BranchContractProvider>(context, listen: false);
+        
+        // Find branches that have contracts of this type
+        final branchesWithContractType = branchContractProvider.branches
+            .where((branch) {
+              final contractsForBranch = branchContractProvider.getContractsForBranch(branch.id);
+              return contractsForBranch.any((contract) => contract.type == contractTypeStr);
+            })
+            .toList();
+        
+        // Auto-select branch if there's only one
+        if (branchesWithContractType.length == 1) {
+          setState(() {
+            _selectedBranch = branchesWithContractType.first;
+          });
+          branchContractProvider.selectBranch(_selectedBranch!);
+          
+          // Find a contract of this type for the branch
+          final contractsForBranch = branchContractProvider.getContractsForBranch(_selectedBranch!.id);
+          final matchingContracts = contractsForBranch.where(
+            (contract) => contract.type == contractTypeStr
+          ).toList();
+          
+          if (matchingContracts.isNotEmpty) {
+            branchContractProvider.selectContract(matchingContracts.first);
+          }
+        }
+      }
+      
       final response = await GuardService.getAssignedGuards(
-        contractType: _selectedContractType.name,
+        contractType: contractTypeStr,
         branchId: _selectedBranch?.id,
         onDutyToday: _filterOnDutyToday ? true : null,
         onDutyTomorrow: _filterOnDutyTomorrow ? true : null,
       );
+      
+      if (!mounted) return;
       
       if (response.success) {
         setState(() {
           _guards = response.guards;
           _isLoading = false;
         });
-        _animationController.forward();
+        if (_animationController.status != AnimationStatus.forward && 
+            _animationController.status != AnimationStatus.completed) {
+          _animationController.forward();
+        }
       } else {
         setState(() {
           _errorMessage = response.message;
@@ -101,6 +241,8 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
         });
       }
     } catch (e) {
+      if (!mounted) return;
+      
       setState(() {
         _errorMessage = 'حدث خطأ أثناء تحميل البيانات';
         _isLoading = false;
@@ -167,7 +309,7 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
     );
   }
   
-  /// Build contract type selector
+  /// Build contract type and branch selector
   Widget _buildContractTypeSelector() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -181,60 +323,224 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
           ),
         ],
       ),
-      child: Row(
+      child: Column(
         children: [
-          Text(
-            'نوع العقد:',
-            style: GoogleFonts.cairo(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.accent,
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppTheme.bg,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.withOpacity(0.3)),
-              ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<ContractType>(
-                  value: _selectedContractType,
-                  isExpanded: true,
-                  borderRadius: BorderRadius.circular(12),
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  icon: const Icon(Icons.arrow_drop_down, color: AppTheme.primary),
-                  items: ContractType.values.map((ContractType type) {
-                    return DropdownMenuItem<ContractType>(
-                      value: type,
-                      child: Text(
-                        type.arabicName,
-                        style: GoogleFonts.cairo(
-                          fontSize: 14,
-                          color: AppTheme.accent,
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (ContractType? newValue) {
-                    if (newValue != null) {
-                      setState(() {
-                        _selectedContractType = newValue;
-                      });
-                      
-                      // Update provider
-                      final userRoleProvider = Provider.of<UserRoleProvider>(context, listen: false);
-                      userRoleProvider.selectContractType(newValue);
-                      
-                      // Reload guards with new filter
-                      _loadGuards();
-                    }
-                  },
+          // Contract Type Row
+          Row(
+            children: [
+              Text(
+                'نوع العقد:',
+                style: GoogleFonts.cairo(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.accent,
                 ),
               ),
-            ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.bg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _selectedContractType == ContractType.security ? 'حراسة' : 'سياقة',
+                      isExpanded: true,
+                      borderRadius: BorderRadius.circular(12),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      icon: const Icon(Icons.arrow_drop_down, color: AppTheme.primary),
+                      items: [
+                        DropdownMenuItem<String>(
+                          value: 'حراسة',
+                          child: Text(
+                            'عقد حراسة',
+                            style: GoogleFonts.cairo(
+                              fontSize: 14,
+                              color: AppTheme.accent,
+                            ),
+                          ),
+                        ),
+                        DropdownMenuItem<String>(
+                          value: 'سياقة',
+                          child: Text(
+                            'عقد سائقين',
+                            style: GoogleFonts.cairo(
+                              fontSize: 14,
+                              color: AppTheme.accent,
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: (String? newValue) {
+                        if (newValue != null) {
+                          setState(() {
+                            _selectedContractType = newValue == 'حراسة' ? 
+                                ContractType.security : ContractType.personal;
+                          });
+                          
+                          // Update provider
+                          final userRoleProvider = Provider.of<UserRoleProvider>(context, listen: false);
+                          userRoleProvider.selectContractType(_selectedContractType);
+                          
+                          // Get branch contract provider
+                          final branchContractProvider = Provider.of<BranchContractProvider>(context, listen: false);
+                          
+                          // Find branches that have contracts of this type
+                          final contractType = newValue;
+                          final branchesWithContractType = branchContractProvider.branches
+                              .where((branch) {
+                                final contractsForBranch = branchContractProvider.getContractsForBranch(branch.id);
+                                return contractsForBranch.any((contract) => contract.type == contractType);
+                              })
+                              .toList();
+                          
+                          // Auto-select branch if there's only one
+                          if (branchesWithContractType.length == 1) {
+                            setState(() {
+                              _selectedBranch = branchesWithContractType.first;
+                            });
+                            branchContractProvider.selectBranch(_selectedBranch!);
+                            
+                            // Find a contract of this type for the branch
+                            final contractsForBranch = branchContractProvider.getContractsForBranch(_selectedBranch!.id);
+                            final matchingContracts = contractsForBranch.where(
+                              (contract) => contract.type == contractType
+                            ).toList();
+                            
+                            if (matchingContracts.isNotEmpty) {
+                              branchContractProvider.selectContract(matchingContracts.first);
+                            }
+                          } else if (_selectedBranch != null) {
+                            // Check if current branch has contracts of this type
+                            final contractsForBranch = branchContractProvider.getContractsForBranch(_selectedBranch!.id);
+                            final hasContractsOfType = contractsForBranch.any(
+                              (contract) => contract.type == contractType
+                            );
+                            
+                            if (!hasContractsOfType && branchesWithContractType.isNotEmpty) {
+                              // Select the first branch that has contracts of this type
+                              setState(() {
+                                _selectedBranch = branchesWithContractType.first;
+                              });
+                              branchContractProvider.selectBranch(_selectedBranch!);
+                              
+                              // Find a contract of this type for the branch
+                              final newContractsForBranch = branchContractProvider.getContractsForBranch(_selectedBranch!.id);
+                              final matchingContracts = newContractsForBranch.where(
+                                (contract) => contract.type == contractType
+                              ).toList();
+                              
+                              if (matchingContracts.isNotEmpty) {
+                                branchContractProvider.selectContract(matchingContracts.first);
+                              }
+                            }
+                          }
+                          
+                          // Reload guards with new filter
+                          _loadGuards();
+                        }
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 12),
+          
+          // Branch Selection Row
+          Consumer<BranchContractProvider>(
+            builder: (context, branchContractProvider, child) {
+              // Get the current contract type
+              final contractType = _selectedContractType == ContractType.security ? 'حراسة' : 'سياقة';
+              
+              // Find branches that have contracts of this type
+              final branchesWithContractType = branchContractProvider.branches
+                  .where((branch) {
+                    final contractsForBranch = branchContractProvider.getContractsForBranch(branch.id);
+                    return contractsForBranch.any((contract) => contract.type == contractType);
+                  })
+                  .toList();
+              
+              return Row(
+                children: [
+                  Text(
+                    'الفرع:',
+                    style: GoogleFonts.cairo(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.accent,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: AppTheme.bg,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<Branch>(
+                          value: _selectedBranch,
+                          isExpanded: true,
+                          borderRadius: BorderRadius.circular(12),
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          icon: const Icon(Icons.arrow_drop_down, color: AppTheme.primary),
+                          hint: Text(
+                            'اختر الفرع',
+                            style: GoogleFonts.cairo(
+                              fontSize: 14,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          items: branchesWithContractType.map((Branch branch) {
+                            return DropdownMenuItem<Branch>(
+                              value: branch,
+                              child: Text(
+                                branch.name,
+                                style: GoogleFonts.cairo(
+                                  fontSize: 14,
+                                  color: AppTheme.accent,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (Branch? newValue) {
+                            if (newValue != null) {
+                              setState(() {
+                                _selectedBranch = newValue;
+                              });
+                              
+                              // Update providers
+                              final userRoleProvider = Provider.of<UserRoleProvider>(context, listen: false);
+                              userRoleProvider.selectBranch(newValue);
+                              branchContractProvider.selectBranch(newValue);
+                              
+                              // Find a contract of the selected type for this branch
+                              final contractsForBranch = branchContractProvider.getContractsForBranch(newValue.id);
+                              final matchingContracts = contractsForBranch.where(
+                                (contract) => contract.type == contractType
+                              ).toList();
+                              
+                              if (matchingContracts.isNotEmpty) {
+                                branchContractProvider.selectContract(matchingContracts.first);
+                              }
+                              
+                              // Reload guards with new filter
+                              _loadGuards();
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -284,9 +590,9 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
                 const SizedBox(height: 16),
                 
                 // Branch selector
-                Consumer<UserRoleProvider>(
-                  builder: (context, provider, child) {
-                    if (provider.isLoading) {
+                Consumer2<UserRoleProvider, BranchContractProvider>(
+                  builder: (context, userRoleProvider, branchContractProvider, child) {
+                    if (userRoleProvider.isLoading || branchContractProvider.isLoading) {
                       return const Center(
                         child: CircularProgressIndicator(color: AppTheme.primary),
                       );
@@ -325,7 +631,7 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
                                   color: Colors.grey,
                                 ),
                               ),
-                              items: provider.branches.map((Branch branch) {
+                              items: branchContractProvider.branches.map((Branch branch) {
                                 return DropdownMenuItem<Branch>(
                                   value: branch,
                                   child: Text(
@@ -337,14 +643,36 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
                                   ),
                                 );
                               }).toList(),
-                              onChanged: provider.userRole == UserRole.branchManager 
+                              onChanged: userRoleProvider.userRole == UserRole.branchManager 
                                 ? null // Branch managers can't change their branch
                                 : (Branch? newValue) {
                                     setState(() {
                                       _selectedBranch = newValue;
                                     });
                                     if (newValue != null) {
-                                      provider.selectBranch(newValue);
+                                      // Update both providers
+                                      userRoleProvider.selectBranch(newValue);
+                                      branchContractProvider.selectBranch(newValue);
+                                      
+                                      // Find a contract for this branch
+                                      final contractsForBranch = branchContractProvider.getContractsForBranch(newValue.id);
+                                      if (contractsForBranch.isNotEmpty) {
+                                        // Find a contract matching the selected contract type if possible
+                                        final contractType = _selectedContractType == ContractType.security ? 'حراسة' : 'سياقة';
+                                        final matchingContracts = contractsForBranch.where(
+                                          (contract) => contract.type == contractType
+                                        ).toList();
+                                        
+                                        if (matchingContracts.isNotEmpty) {
+                                          branchContractProvider.selectContract(matchingContracts.first);
+                                        } else {
+                                          branchContractProvider.selectContract(contractsForBranch.first);
+                                        }
+                                      }
+                                      
+                                      // Reload guards with new filter
+                                      Navigator.pop(context);
+                                      _loadGuards();
                                     }
                                   },
                             ),
@@ -354,6 +682,142 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
                     );
                   },
                 ),
+                const SizedBox(height: 24),
+                
+                // Contract selection
+                Consumer<BranchContractProvider>(
+                  builder: (context, provider, child) {
+                    if (_selectedBranch == null) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'العقد:',
+                            style: GoogleFonts.cairo(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.accent,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.grey[300]!),
+                            ),
+                            child: Text(
+                              'يرجى اختيار الفرع أولاً',
+                              style: GoogleFonts.cairo(color: Colors.grey[600]),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ],
+                      );
+                    }
+                    
+                    final contractsForBranch = provider.getContractsForBranch(_selectedBranch!.id);
+                    
+                    if (contractsForBranch.isEmpty) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'العقد:',
+                            style: GoogleFonts.cairo(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.accent,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.grey[300]!),
+                            ),
+                            child: Text(
+                              'لا توجد عقود متاحة لهذا الفرع',
+                              style: GoogleFonts.cairo(color: Colors.grey[600]),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ],
+                      );
+                    }
+                    
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'العقد:',
+                          style: GoogleFonts.cairo(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.accent,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: AppTheme.bg,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                          ),
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<Contract>(
+                              value: provider.selectedContract,
+                              isExpanded: true,
+                              borderRadius: BorderRadius.circular(12),
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              icon: const Icon(Icons.arrow_drop_down, color: AppTheme.primary),
+                              hint: Text(
+                                'اختر العقد',
+                                style: GoogleFonts.cairo(
+                                  fontSize: 14,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                              items: contractsForBranch.map((Contract contract) {
+                                return DropdownMenuItem<Contract>(
+                                  value: contract,
+                                  child: Text(
+                                    contract.title,
+                                    style: GoogleFonts.cairo(
+                                      fontSize: 14,
+                                      color: AppTheme.accent,
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                              onChanged: (Contract? newValue) {
+                                if (newValue != null) {
+                                  provider.selectContract(newValue);
+                                  
+                                  // Update contract type based on contract
+                                  if (newValue.type == 'حراسة') {
+                                    setState(() {
+                                      _selectedContractType = ContractType.security;
+                                    });
+                                  } else if (newValue.type == 'سياقة') {
+                                    setState(() {
+                                      _selectedContractType = ContractType.personal;
+                                    });
+                                  }
+                                }
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                
                 const SizedBox(height: 24),
                 
                 // Duty filters
@@ -486,6 +950,41 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
       );
     }
     
+    // Check if a branch is selected
+    if (_selectedBranch == null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              LucideIcons.building2,
+              size: 64,
+              color: AppTheme.primary.withOpacity(0.5),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'يرجى اختيار الفرع',
+              style: GoogleFonts.cairo(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.accent,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'قم باختيار الفرع من القائمة أعلاه لعرض الحراس المخصصين',
+              style: GoogleFonts.cairo(
+                fontSize: 14,
+                color: AppTheme.accent.withOpacity(0.7),
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+    
     if (_guards.isEmpty) {
       return Center(
         child: Column(
@@ -498,7 +997,7 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
             ),
             const SizedBox(height: 16),
             Text(
-              'لا يوجد حراس مخصصين لك',
+              'لا يوجد حراس مخصصين لهذا الفرع',
               style: GoogleFonts.cairo(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -508,7 +1007,7 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
             ),
             const SizedBox(height: 8),
             Text(
-              'سيظهر هنا قائمة الحراس المخصصين لك',
+              'جرب اختيار فرع آخر أو نوع عقد آخر',
               style: GoogleFonts.cairo(
                 fontSize: 14,
                 color: AppTheme.accent.withOpacity(0.7),
@@ -588,7 +1087,7 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
   
   Widget _buildGuardCard(Guard guard) {
     // Check if guard is on leave
-    final onLeave = guard.leaveDays.any((leave) => leave.isActive);
+    final onLeave = guard.leaveDays.isNotEmpty && guard.leaveDays.any((leave) => leave.isActive);
     
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -709,7 +1208,7 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
                             color: AppTheme.accent.withOpacity(0.7),
                           ),
                         ),
-                        if (guard.specialization != null) ...[
+                        if (guard.specialization != null && guard.specialization!.isNotEmpty) ...[
                           const SizedBox(height: 2),
                           Text(
                             guard.specialization!,
@@ -801,7 +1300,7 @@ class _GuardsScreenState extends State<GuardsScreen> with SingleTickerProviderSt
               ],
               
               // Show replacement guard if on leave
-              if (onLeave && guard.leaveDays.first.replacementGuard != null) ...[
+              if (onLeave && guard.leaveDays.isNotEmpty && guard.leaveDays.first.replacementGuard != null) ...[
                 const SizedBox(height: 16),
                 const Divider(),
                 const SizedBox(height: 8),

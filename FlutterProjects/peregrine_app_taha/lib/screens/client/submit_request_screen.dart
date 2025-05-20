@@ -25,6 +25,7 @@ class _SubmitRequestScreenState extends State<SubmitRequestScreen> with SingleTi
   String _selectedRequestType = 'خدمة حراسة';
   final List<String> _requestTypes = [
     'خدمة حراسة',
+    'خدمة سياقة',
     'حماية شخصية',
     'تقرير أمني',
     'استشارة أمنية',
@@ -58,9 +59,64 @@ class _SubmitRequestScreenState extends State<SubmitRequestScreen> with SingleTi
     _animationController.forward();
     
     // Initialize branch and contract data
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       final userRoleProvider = Provider.of<UserRoleProvider>(context, listen: false);
-      userRoleProvider.initialize();
+      await userRoleProvider.initialize();
+      
+      // Initialize branch contract provider
+      final branchContractProvider = Provider.of<BranchContractProvider>(context, listen: false);
+      await branchContractProvider.initialize();
+      
+      // Set initial branch and contract if available
+      if (!mounted) return;
+      
+      setState(() {
+        // Use the branch from user role provider if available
+        if (userRoleProvider.selectedBranch != null) {
+          // Find the matching branch from branchContractProvider to ensure we use the same instance
+          String selectedBranchId = userRoleProvider.selectedBranch!.id;
+          _selectedBranch = branchContractProvider.branches.firstWhere(
+            (branch) => branch.id == selectedBranchId,
+            orElse: () => branchContractProvider.branches.isNotEmpty ? 
+                          branchContractProvider.branches.first : 
+                          userRoleProvider.selectedBranch!
+          );
+          
+          branchContractProvider.selectBranch(_selectedBranch!);
+          
+          // Find contracts for this branch
+          final contractsForBranch = branchContractProvider.getContractsForBranch(_selectedBranch!.id);
+          if (contractsForBranch.isNotEmpty) {
+            _selectedContract = contractsForBranch.first;
+            branchContractProvider.selectContract(_selectedContract!);
+            
+            // Update request type based on contract type
+            if (_selectedContract!.type == 'حراسة') {
+              _selectedRequestType = 'خدمة حراسة';
+            } else if (_selectedContract!.type == 'سياقة') {
+              _selectedRequestType = 'خدمة سياقة';
+            }
+          }
+        } else if (branchContractProvider.branches.isNotEmpty) {
+          // Otherwise use the first branch from branch contract provider
+          _selectedBranch = branchContractProvider.branches.first;
+          branchContractProvider.selectBranch(_selectedBranch!);
+          
+          // Find contracts for this branch
+          final contractsForBranch = branchContractProvider.getContractsForBranch(_selectedBranch!.id);
+          if (contractsForBranch.isNotEmpty) {
+            _selectedContract = contractsForBranch.first;
+            branchContractProvider.selectContract(_selectedContract!);
+            
+            // Update request type based on contract type
+            if (_selectedContract!.type == 'حراسة') {
+              _selectedRequestType = 'خدمة حراسة';
+            } else if (_selectedContract!.type == 'سياقة') {
+              _selectedRequestType = 'خدمة سياقة';
+            }
+          }
+        }
+      });
     });
   }
   
@@ -111,6 +167,8 @@ class _SubmitRequestScreenState extends State<SubmitRequestScreen> with SingleTi
       
       // Check if branch and contract are selected
       if (_selectedBranch == null || _selectedContract == null) {
+        if (!mounted) return;
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -122,6 +180,8 @@ class _SubmitRequestScreenState extends State<SubmitRequestScreen> with SingleTi
         );
         return;
       }
+      
+      if (!mounted) return;
       
       setState(() {
         _isSubmitting = true;
@@ -146,6 +206,8 @@ class _SubmitRequestScreenState extends State<SubmitRequestScreen> with SingleTi
       
       // Simulate API call
       await Future.delayed(const Duration(seconds: 2));
+      
+      if (!mounted) return;
       
       setState(() {
         _isSubmitting = false;
@@ -370,6 +432,21 @@ class _SubmitRequestScreenState extends State<SubmitRequestScreen> with SingleTi
                     );
                   }
                   
+                  // Group contracts by type
+                  final hasSecurityContracts = contractsForBranch.any((contract) => contract.type == 'حراسة');
+                  final hasDriverContracts = contractsForBranch.any((contract) => contract.type == 'سياقة');
+                  
+                  // Create contract type options
+                  final contractTypes = <String>[];
+                  if (hasSecurityContracts) contractTypes.add('حراسة');
+                  if (hasDriverContracts) contractTypes.add('سياقة');
+                  
+                  // Find the current contract type
+                  String? selectedContractType;
+                  if (_selectedContract != null) {
+                    selectedContractType = _selectedContract!.type;
+                  }
+                  
                   return Container(
                     decoration: BoxDecoration(
                       color: Colors.white,
@@ -382,8 +459,8 @@ class _SubmitRequestScreenState extends State<SubmitRequestScreen> with SingleTi
                         ),
                       ],
                     ),
-                    child: DropdownButtonFormField<Contract>(
-                      value: _selectedContract,
+                    child: DropdownButtonFormField<String>(
+                      value: selectedContractType,
                       decoration: InputDecoration(
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(20),
@@ -391,29 +468,53 @@ class _SubmitRequestScreenState extends State<SubmitRequestScreen> with SingleTi
                         ),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                         prefixIcon: const Icon(Icons.description, color: AppTheme.primary),
-                        hintText: 'اختر العقد',
+                        hintText: 'اختر نوع العقد',
                         hintStyle: GoogleFonts.cairo(color: Colors.grey[400]),
                       ),
                       style: GoogleFonts.cairo(
                         color: AppTheme.accent,
-                        fontSize: 12,
+                        fontSize: 14,
                       ),
                       icon: const Icon(Icons.arrow_drop_down, color: AppTheme.primary),
-                      items: contractsForBranch.map((Contract contract) {
-                        return DropdownMenuItem<Contract>(
-                          value: contract,
-                          child: Text(contract.title),
+                      items: contractTypes.map((String type) {
+                        return DropdownMenuItem<String>(
+                          value: type,
+                          child: Text(
+                            type == 'حراسة' ? 'عقد حراسة' : 'عقد سائقين',
+                            style: GoogleFonts.cairo(
+                              fontSize: 14,
+                              color: AppTheme.accent,
+                            ),
+                          ),
                         );
                       }).toList(),
-                      onChanged: (Contract? newValue) {
-                        setState(() {
-                          _selectedContract = newValue;
-                        });
+                      onChanged: (String? newValue) {
                         if (newValue != null) {
-                          provider.selectContract(newValue);
+                          // Find the first contract of this type
+                          final contractsOfType = contractsForBranch
+                              .where((contract) => contract.type == newValue)
+                              .toList();
+                          
+                          if (contractsOfType.isNotEmpty) {
+                            setState(() {
+                              _selectedContract = contractsOfType.first;
+                            });
+                            provider.selectContract(contractsOfType.first);
+                            
+                            // Update request type based on contract type
+                            if (newValue == 'حراسة') {
+                              setState(() {
+                                _selectedRequestType = 'خدمة حراسة';
+                              });
+                            } else if (newValue == 'سياقة') {
+                              setState(() {
+                                _selectedRequestType = 'خدمة سياقة';
+                              });
+                            }
+                          }
                         }
                       },
-                      validator: (val) => val == null ? 'يرجى اختيار العقد' : null,
+                      validator: (val) => val == null ? 'يرجى اختيار نوع العقد' : null,
                     ),
                   );
                 },
